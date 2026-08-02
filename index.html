@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>COVID-19 US State Narrative</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      max-width: 920px;
+      margin: 20px auto;
+      padding: 0 20px;
+      color: #222;
+    }
+    h1 {
+      margin-bottom: 5px;
+    }
+    .subtitle {
+      color: #666;
+      margin-top: 0;
+      margin-bottom: 20px;
+    }
+    .scene-title {
+      font-size: 1.4rem;
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #004085;
+    }
+    .scene-text {
+      font-size: 1rem;
+      color: #444;
+      margin-bottom: 20px;
+      min-height: 50px;
+      line-height: 1.5;
+    }
+    #controls {
+      margin-bottom: 20px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    button {
+      padding: 9px 18px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+    }
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    .annotation {
+      font-size: 0.85rem;
+      fill: #d9534f;
+      font-weight: bold;
+    }
+    .annotation-line {
+      stroke: #d9534f;
+      stroke-width: 1.5px;
+      stroke-dasharray: 4;
+    }
+    .tooltip {
+      position: absolute;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      border-radius: 5px;
+      font-size: 0.85rem;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+      box-shadow: 0px 2px 6px rgba(0,0,0,0.3);
+    }
+    circle {
+      transition: opacity 0.5s ease, r 0.5s ease;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>COVID-19 Trajectories: How the U.S. Pandemic Shifted</h1>
+  
+  <!-- UI Triggers -->
+  <div id="controls">
+    <button id="prevBtn" onclick="triggerSceneChange(-1)">← Previous</button>
+    <button id="nextBtn" onclick="triggerSceneChange(1)">Next →</button>
+    <span id="step-indicator" style="margin-left: auto; font-weight: bold; color: #555;">Step 1 of 3</span>
+  </div>
+
+  <div class="scene-title" id="title"></div>
+  <div class="scene-text" id="description"></div>
+
+  <!-- SVG Container for D3 Visuals -->
+  <div id="vis"></div>
+  
+  <!-- Hover Tooltip Element -->
+  <div id="tooltip" class="tooltip"></div>
+
+<script>
+
+const stateData = [
+  // Scene 0: Early Epicenter (May 1, 2020)
+  { state: "New York", period: "Spring 2020", cases: 313575, deaths: 23841, region: "Northeast" },
+  { state: "New Jersey", period: "Spring 2020", cases: 121190, deaths: 7538, region: "Northeast" },
+  { state: "Illinois", period: "Spring 2020", cases: 56055, deaths: 2464, region: "Midwest" },
+  { state: "California", period: "Spring 2020", cases: 52318, deaths: 2147, region: "West" },
+  { state: "Pennsylvania", period: "Spring 2020", cases: 49764, deaths: 2671, region: "Northeast" },
+  { state: "Michigan", period: "Spring 2020", cases: 42348, deaths: 3866, region: "Midwest" },
+  { state: "Florida", period: "Spring 2020", cases: 34720, deaths: 1313, region: "South" },
+  { state: "Texas", period: "Spring 2020", cases: 30342, deaths: 853, region: "South" },
+
+  // Scene 1: Nationwide Winter Wave (Dec 31, 2020)
+  { state: "California", period: "Winter 2020", cases: 2307860, deaths: 25965, region: "West" },
+  { state: "Texas", period: "Winter 2020", cases: 1770527, deaths: 28155, region: "South" },
+  { state: "Florida", period: "Winter 2020", cases: 1323307, deaths: 21672, region: "South" },
+  { state: "New York", period: "Winter 2020", cases: 979040, deaths: 37557, region: "Northeast" },
+  { state: "Illinois", period: "Winter 2020", cases: 965840, deaths: 17979, region: "Midwest" },
+  { state: "Ohio", period: "Winter 2020", cases: 700380, deaths: 8962, region: "Midwest" },
+  { state: "Pennsylvania", period: "Winter 2020", cases: 646060, deaths: 16020, region: "Northeast" },
+  { state: "Georgia", period: "Winter 2020", cases: 644065, deaths: 10588, region: "South" },
+
+  // Scene 2: Cumulative End-State (March 2023 Snapshot)
+  { state: "California", period: "End State", cases: 12169158, deaths: 104277, region: "West" },
+  { state: "Texas", period: "End State", cases: 8447168, deaths: 94518, region: "South" },
+  { state: "Florida", period: "End State", cases: 7542869, deaths: 87141, region: "South" },
+  { state: "New York", period: "End State", cases: 6805271, deaths: 80109, region: "Northeast" },
+  { state: "Illinois", period: "End State", cases: 4107931, deaths: 41618, region: "Midwest" },
+  { state: "Pennsylvania", period: "End State", cases: 3539135, deaths: 50701, region: "Northeast" },
+  { state: "Ohio", period: "End State", cases: 3415254, deaths: 42061, region: "Midwest" },
+  { state: "Georgia", period: "End State", cases: 2984923, deaths: 41055, region: "South" }
+];
+
+// ============================================================================
+// PARAMETERS & NARRATIVE STRUCTURE
+// ============================================================================
+let currentScene = 0; // State variable: 0 = Spring 2020, 1 = Winter 2020, 2 = Free Exploration
+
+const scenes = [
+  {
+    period: "Spring 2020",
+    title: "1. The Early Epicenter (Spring 2020)",
+    description: "In early 2020, New York was the primary area of the U.S. outbreak, recording over 310,000 cases and disproportionately high fatality rates compared to other states.",
+    filter: d => d.period === "Spring 2020",
+    highlight: d => d.state === "New York" || d.state === "New Jersey"
+  },
+  {
+    period: "Winter 2020",
+    title: "2. The Sunbelt & West Coast Surge (Winter 2020)",
+    description: "By late 2020, cases exploded in populous states like California, Texas, and Florida.",
+    filter: d => d.period === "Winter 2020",
+    highlight: d => d.state === "California" || d.state === "Texas" || d.state === "Florida"
+  },
+  {
+    period: "End State",
+    title: "3. Cumulative Totals & Free Exploration",
+    description: "<strong>Author narrative complete!</strong> Hover over individual state nodes to inspect exact cumulative cases, deaths, and regional classifications.",
+    filter: d => d.period === "End State",
+    highlight: d => true
+  }
+];
+
+// ============================================================================
+// VISUAL SETUP (D3 Canvas & Scales)
+// ============================================================================
+const margin = { top: 40, right: 40, bottom: 65, left: 85 };
+const width = 880 - margin.left - margin.right;
+const height = 460 - margin.top - margin.bottom;
+
+const svg = d3.select("#vis")
+  .append("svg")
+    .attr("width", width + margin.left + margin.right)
+    .attr("height", height + margin.top + margin.bottom)
+  .append("g")
+    .attr("transform", `translate(${margin.left},${margin.top})`);
+
+// dynamic scales based on full dataset max values
+const xScale = d3.scaleLinear().domain([0, 13000000]).range([0, width]);
+const yScale = d3.scaleLinear().domain([0, 110000]).range([height, 0]);
+const colorScale = d3.scaleOrdinal()
+  .domain(["Northeast", "West", "South", "Midwest"])
+  .range(["#d9534f", "#0275d8", "#f0ad4e", "#5cb85c"]);
+
+// Axes
+const xAxis = svg.append("g")
+  .attr("transform", `translate(0,${height})`)
+  .call(d3.axisBottom(xScale).tickFormat(d3.format(".1s")));
+
+const yAxis = svg.append("g")
+  .call(d3.axisLeft(yScale).tickFormat(d3.format(".1s")));
+
+// Axis Labels
+svg.append("text")
+  .attr("x", width / 2)
+  .attr("y", height + 50)
+  .style("text-anchor", "middle")
+  .style("font-weight", "600")
+  .text("Confirmed Cumulative Cases");
+
+svg.append("text")
+  .attr("transform", "rotate(-90)")
+  .attr("x", -height / 2)
+  .attr("y", -60)
+  .style("text-anchor", "middle")
+  .style("font-weight", "600")
+  .text("Confirmed Cumulative Deaths");
+
+// Container for dynamic Annotations
+const annotationGroup = svg.append("g").attr("class", "annotation-group");
+
+// Tooltip DOM reference
+const tooltip = d3.select("#tooltip");
+
+// ============================================================================
+// RENDER FUNCTION (Scene Construction)
+// ============================================================================
+function renderScene() {
+  const sceneParams = scenes[currentScene];
+
+  // Update Narrative Headers & State Indicator
+  d3.select("#title").html(sceneParams.title);
+  d3.select("#description").html(sceneParams.description);
+  d3.select("#step-indicator").text(`Step ${currentScene + 1} of ${scenes.length}`);
+  
+  // UI Button Controls
+  d3.select("#prevBtn").property("disabled", currentScene === 0);
+  d3.select("#nextBtn").property("disabled", currentScene === scenes.length - 1);
+
+  // Filter data corresponding to current scene period
+  const activeData = stateData.filter(sceneParams.filter);
+
+  // Data Binding with D3 Key Function
+  const circles = svg.selectAll("circle")
+    .data(activeData, d => d.state);
+
+  // Exit old elements
+  circles.exit().remove();
+
+  // Enter + Update Pattern
+  circles.enter()
+    .append("circle")
+      .attr("cx", d => xScale(d.cases))
+      .attr("cy", d => yScale(d.deaths))
+      .attr("r", 10)
+    .merge(circles)
+      .transition().duration(650)
+      .attr("cx", d => xScale(d.cases))
+      .attr("cy", d => yScale(d.deaths))
+      .attr("fill", d => colorScale(d.region))
+      .attr("opacity", d => sceneParams.highlight(d) ? 0.95 : 0.20)
+      .attr("r", d => sceneParams.highlight(d) ? 12 : 7);
+
+  // Interaction / Triggers for Tooltips (Unlocked in Scene 3)
+  svg.selectAll("circle")
+    .on("mouseover", function(event, d) {
+      if (currentScene === 2) {
+        tooltip.style("opacity", 1)
+          .html(`<strong>${d.state}</strong> (${d.region})<br/>Cases: ${d.cases.toLocaleString()}<br/>Deaths: ${d.deaths.toLocaleString()}`)
+          .style("left", (event.pageX + 12) + "px")
+          .style("top", (event.pageY - 28) + "px");
+        d3.select(this).attr("stroke", "#000").attr("stroke-width", 2.5);
+      }
+    })
+    .on("mouseout", function() {
+      if (currentScene === 2) {
+        tooltip.style("opacity", 0);
+        d3.select(this).attr("stroke", "none");
+      }
+    });
+
+  renderAnnotations();
+}
+
+// ============================================================================
+// ANNOTATION TEMPLATE & LOGIC
+// ============================================================================
+function renderAnnotations() {
+  annotationGroup.selectAll("*").remove(); // Clear previous annotations
+
+  if (currentScene === 0) {
+    // Scene 1 Callout for NY
+    const ny = stateData.find(d => d.state === "New York" && d.period === "Spring 2020");
+    const x = xScale(ny.cases);
+    const y = yScale(ny.deaths);
+
+    annotationGroup.append("line")
+      .attr("x1", x).attr("y1", y)
+      .attr("x2", x + 40).attr("y2", y + 35)
+      .attr("class", "annotation-line");
+
+    annotationGroup.append("text")
+      .attr("x", x + 45).attr("y", y + 40)
+      .attr("class", "annotation")
+      .text("NY Epicenter: >23,000 deaths early on");
+
+  } else if (currentScene === 1) {
+    // Scene 2 Callout for California
+    const ca = stateData.find(d => d.state === "California" && d.period === "Winter 2020");
+    const x = xScale(ca.cases);
+    const y = yScale(ca.deaths);
+
+    annotationGroup.append("line")
+      .attr("x1", x).attr("y1", y)
+      .attr("x2", x - 40).attr("y2", y + 30)
+      .attr("class", "annotation-line");
+
+    annotationGroup.append("text")
+      .attr("x", x - 100).attr("y", y + 45)
+      .attr("class", "annotation")
+      .text("CA Surge: Exceeds 2.3M cumulative cases");
+  }
+}
+
+// ============================================================================
+// TRIGGERS (Event Handlers)
+// ============================================================================
+function triggerSceneChange(direction) {
+  currentScene += direction;
+  if (currentScene < 0) currentScene = 0;
+  if (currentScene >= scenes.length) currentScene = scenes.length - 1;
+  
+  renderScene();
+}
+
+// Initial Bootstrapping
+renderScene();
+</script>
+</body>
+</html>
